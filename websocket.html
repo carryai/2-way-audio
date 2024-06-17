@@ -1,0 +1,187 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>麥克風音頻</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<!-- Bootstrap Bundle JS (includes Popper) -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.min.js"></script>
+
+<style>
+    body {
+        padding: 10px;
+    }
+    #console {
+        height: 150px;
+        border: 1px solid #ccc;
+        margin-top: 20px;
+        padding: 10px;
+        overflow-y: scroll;
+        background-color: #f8f9fa;
+    }
+</style>
+</head>
+<body>
+    <div class="container my-4">
+        <h2 class="mb-3">麥克風音頻</h2>
+        <button id="startButton" class="btn btn-primary">開始直播</button>
+        <button id="muteButton" class="btn btn-success">靜音</button>
+        <!-- Gain Control Slider -->
+        <div class="mt-4">
+            <label for="gainControl" class="form-label">音量</label>
+            <input type="range" class="form-range" min="0" max="2" step="0.01" id="gainControl" value="1">
+        </div>
+        <div id="console"></div>
+    </div>
+<!-- Modal -->
+<div id="alertModal" class="modal fade" id="staticBackdrop" data-bs-backdrop="static" data-bs-keyboard="false" tabindex="-1" aria-labelledby="staticBackdropLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-body">
+        <span id="modalText"></span>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+    <script>
+    let streaming = false;
+    const startButton = document.getElementById('startButton');
+    const muteButton = document.getElementById('muteButton');
+    const consoleDiv = document.getElementById('console');
+    let audioContext, gainNode, processor, ws, source;
+
+    let isMuted = false;
+
+    startButton.addEventListener('click', function() {
+        if (!streaming) {
+            startStreaming();
+        } else {
+            stopStreaming();
+        }
+    });
+
+    async function startStreaming() {
+        if (!audioContext) {
+            audioContext = new AudioContext();
+        }
+        gainNode = audioContext.createGain();
+                
+        await audioContext.audioWorklet.addModule('audio-processor.js');
+        ws = new WebSocket('ws://192.168.55.1:8080/');
+
+        ws.onopen = async function() {
+            //logToConsole('WebSocket connection opened.');
+            const constraints = {
+                audio: {
+                    sampleRate: 48000,
+                    channelCount: 1,
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: false
+                }
+            };
+            
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                source = audioContext.createMediaStreamSource(stream);
+                processor = new AudioWorkletNode(audioContext, 'audio-processor');
+                //source.connect(processor);
+                source.connect(gainNode);
+                gainNode.connect(processor);
+                processor.connect(audioContext.destination);
+
+                logToConsole('現在正在直播');
+
+
+                processor.port.onmessage = function(event) {
+                    const float32Array = new Float32Array(event.data);
+                    if (!isMuted) {
+                        if (ws.readyState === ws.OPEN) {
+                            ws.send(float32Array.buffer);
+                        }
+                    }
+                };
+
+                streaming = true;
+                updateButton(streaming);
+
+            } catch (error) {
+                console.error('Error accessing microphone', error);
+                logToConsole('存取麥克風時出錯 ' + error.message);
+            }
+        };
+
+        ws.onclose = function() {
+            logToConsole('斷開連接');
+        };
+
+        ws.onerror = function(event) {
+            logToConsole('連接錯誤: ' + JSON.stringify(event));
+        };
+
+
+        ws.onmessage = function(event) {
+            console.log("Message from server:", event.data);
+            // You can show this message directly to users or log it
+            if (event.data.includes("replaced")) {
+                logToConsole('連接錯誤: ' + JSON.stringify(event));
+                //alert("您的串流已被新連線取代。");                
+                showModal("您的串流已被新連線取代。");
+                stopStreaming();
+            }
+        };
+                
+    };
+
+    function stopStreaming() {
+        if (source) source.disconnect();
+        //if (processor) processor.disconnect();
+        //if (gainNode) gainNode.disconnect();
+        //if (audioContext) audioContext.close();
+        if (ws) ws.close();
+
+        streaming = false;
+        updateButton(streaming);
+    }
+
+    function updateButton(streaming) {
+        startButton.textContent = streaming ? '關閉直播' : '開始直播';
+        startButton.className = streaming ? 'btn btn-danger' : 'btn btn-primary';
+    }
+
+    muteButton.addEventListener('click', function() {
+        isMuted = !isMuted;
+        //const isMuted = muteButton.classList.contains('btn-success');
+        muteButton.classList.toggle('btn-success', !isMuted);
+        muteButton.classList.toggle('btn-danger', isMuted);
+        muteButton.textContent = isMuted ? '關閉靜音' : '靜音';
+        logToConsole('Audio: ' + (isMuted ? '靜音' : '關閉靜音'));
+
+    });
+
+    function logToConsole(message) {
+        const msgElement = document.createElement('p');
+        msgElement.textContent = message;
+        consoleDiv.appendChild(msgElement);
+        consoleDiv.scrollTop = consoleDiv.scrollHeight;
+    }
+
+    // Function to display the modal with a specific message
+    function showModal(message) {
+        const modalText = document.getElementById("modalText");
+        modalText.textContent = message;
+
+        const alertModal = new bootstrap.Modal(document.getElementById('alertModal'));
+        alertModal.show();
+        
+    }
+
+    </script>
+</body>
+</html>

@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>WebRTC 2-way Audio</title>
+  </head>
+  <body>
+    <button id="callBtn">Start Call</button>
+    <script>
+    var pc_config = {'iceServers': [{'urls': 'stun:stun.l.google.com:19302'}]}
+    var pc = new RTCPeerConnection(pc_config);
+
+    pc.oniceconnectionstatechange = function(event) {
+      console.log('ICE connection state change: ', pc.iceConnectionState);
+    };
+
+    var callBtn = document.querySelector('#callBtn');
+    callBtn.addEventListener('click', startCall);
+
+    function startCall() {
+      navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          sampleRate: 48000
+        },
+        video: false 
+      })
+      .then(function(stream) {
+
+        // // loopback audio to test if we're capturing it correctly
+        // var audioElement = document.createElement('audio');
+        // document.body.appendChild(audioElement);
+        // audioElement.srcObject = stream;
+        // audioElement.play();
+        
+        
+        stream.getTracks().forEach(track => pc.addTrack(track, stream));
+
+        pc.createOffer()
+        .then(offer => pc.setLocalDescription(offer))
+        .then(() => {
+          fetch('/offer', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              sdp: pc.localDescription.sdp,
+              type: pc.localDescription.type
+            })
+          })
+          .then(response => response.json())
+          .then(data => console.log(data))
+          .catch((error) => {
+            console.error('Error:', error);
+          });
+        });
+      })
+      .catch(function(err) {
+        /*Handle Error Here*/
+        console.log(err);
+      });
+    }
+    </script>
+  </body>
+</html>
