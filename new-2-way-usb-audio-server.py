@@ -7,7 +7,7 @@ import time
 # Audio settings
 CHANNELS = 1
 RATE = 48000
-CHUNK = 16384  # Buffer size
+CHUNK = 2048  # Buffer size
 DTYPE = 'int16'  # Use int16f instead of float32
 
 # Global variable to store the current active websocket
@@ -45,9 +45,9 @@ def check_device_availability(index):
 
 async def handle_audio(websocket):
     try:
-        with sd.Stream(samplerate=RATE, channels=CHANNELS, dtype=DTYPE, blocksize=CHUNK,
-                       device=(mic_index, speaker_index)) as stream:
+        with sd.Stream(channels=1, blocksize=RATE, dtype=DTYPE, samplerate=RATE, device=(mic_index, speaker_index)) as stream:
             while True:
+                # time.sleep(0.01)
                 # Read audio input
                 input_data, _ = stream.read(CHUNK)
                 if websocket.open:
@@ -79,7 +79,7 @@ async def audio_handler(websocket, path):
                 print(f"Error disconnecting previous client: {e}")
 
             # Wait for 1 second before allowing a new connection
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.01)
 
         current_websocket = websocket
 

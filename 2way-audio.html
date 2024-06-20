@@ -90,7 +90,7 @@
         }
 
         async function connectWebSocket() {
-            websocket = new WebSocket('ws://localhost:8080');
+            websocket = new WebSocket('ws://192.168.1.20:8080');
             websocket.binaryType = 'arraybuffer';
 
             websocket.onopen = function() {
@@ -135,7 +135,9 @@
 
         async function startAudio() {
             try {
-                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                audioContext = new (window.AudioContext || window.webkitAudioContext)(
+                    // {latencyHint: 'interactive'}
+                );
                 mediaStream = await navigator.mediaDevices.getUserMedia({ audio: {
                         channelCount: 1,
                         echoCancellation: true,
@@ -147,8 +149,7 @@
 
                 gainNode = audioContext.createGain();
                 gainNode.gain.value = gainSlider.value;
-
-                processor = audioContext.createScriptProcessor(512, 1, 1);
+                processor = audioContext.createScriptProcessor(256, 1, 1);
                 processor.onaudioprocess = function(event) {
                     const inputData = event.inputBuffer.getChannelData(0);
                     const int16Data = new Int16Array(inputData.length);
@@ -157,6 +158,7 @@
                     }
                     if (websocket && websocket.readyState === WebSocket.OPEN) {
                         websocket.send(int16Data.buffer);
+                        // logStatus('Sent audio data from MacBook mic');
                     }
                 };
 
@@ -214,6 +216,7 @@
             source.buffer = audioBuffer;
             source.connect(audioContext.destination);
             source.start();
+            // logStatus('Played received audio data');
         }
     </script>
 </body>
