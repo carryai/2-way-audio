@@ -7,7 +7,7 @@ import time
 # Audio settings
 CHANNELS = 1
 RATE = 48000
-CHUNK = 16384  # Buffer size
+CHUNK = 2048  # Buffer size
 DTYPE = 'int16'  # Use int16f instead of float32
 
 # Global variable to store the current active websocket
