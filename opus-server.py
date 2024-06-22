@@ -2,14 +2,15 @@ import asyncio
 import websockets
 import sounddevice as sd
 import numpy as np
-import time
-
+import opuslib
 
 # Audio settings
 CHANNELS = 1
 RATE = 48000
 CHUNK = 2048  # Buffer size
-DTYPE = 'int16'  # Use int16f instead of float32
+DTYPE = 'int16'  # Use int16 instead of float32
+OPUS_APPLICATION = opuslib.APPLICATION_AUDIO
+OPUS_BITRATE = 64000
 
 # Global variable to store the current active websocket
 current_websocket = None
@@ -46,21 +47,29 @@ def check_device_availability(index):
 
 async def handle_audio(websocket):
     try:
+        encoder = opuslib.Encoder(RATE, CHANNELS, OPUS_APPLICATION)
+        encoder.bitrate = OPUS_BITRATE
+        decoder = opuslib.Decoder(RATE, CHANNELS)
+
         with sd.Stream(samplerate=RATE, channels=CHANNELS, dtype=DTYPE, blocksize=CHUNK,
                        device=(mic_index, speaker_index)) as stream:
             while True:
                 # Read audio input
                 input_data, _ = stream.read(CHUNK)
+                input_data = input_data.flatten().astype(np.int16)  # Ensure data is in the correct format
+                encoded_data = encoder.encode(input_data.tobytes(), CHUNK)
+                
                 if websocket.open:
-                    await websocket.send(input_data.tobytes())
+                    await websocket.send(encoded_data)
                     # print("Sent audio data")
 
                 # Receive audio output
                 data = await websocket.recv()
                 if data:
-                    audio_data = np.frombuffer(data, dtype=DTYPE)
-                    print(f"Received audio data of length: {len(audio_data)}")
-                    stream.write(audio_data)
+                    decoded_data = decoder.decode(data, CHUNK)
+                    decoded_data = np.frombuffer(decoded_data, dtype=np.int16).reshape(-1, CHANNELS)
+                    print(f"Received audio data of length: {len(decoded_data)}")
+                    stream.write(decoded_data)
 
     except websockets.ConnectionClosed:
         print("WebSocket connection closed")

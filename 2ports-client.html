@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio WebSocket Client</title>
+    <link href="https://maxcdn.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            padding: 20px;
+        }
+        #log {
+            height: 200px;
+            width: 100%;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="mb-4">Audio WebSocket Client</h1>
+        <button id="connectButton" class="btn btn-primary mb-2">Connect</button>
+        <button id="speakButton" class="btn btn-secondary mb-2" disabled>Speak</button>
+        <button id="disconnectButton" class="btn btn-danger mb-2" disabled>Disconnect</button>
+        <textarea id="log" class="form-control mt-3" readonly></textarea>
+    </div>
+
+    <script>
+        let audioContext;
+        let mediaStream;
+        let inputWebSocket;
+        let outputWebSocket;
+        let logArea = document.getElementById('log');
+
+        function log(message) {
+            logArea.value += message + '\n';
+            logArea.scrollTop = logArea.scrollHeight;
+        }
+
+        document.getElementById('connectButton').addEventListener('click', async () => {
+            try {
+                outputWebSocket = new WebSocket('ws://localhost:8081');
+                outputWebSocket.binaryType = 'arraybuffer';
+                outputWebSocket.onopen = () => {
+                    log('Connected to server on port 8081');
+                    document.getElementById('speakButton').disabled = false;
+                    document.getElementById('disconnectButton').disabled = false;
+                };
+                outputWebSocket.onmessage = (event) => {
+                    if (audioContext) {
+                        let audioBuffer = new Float32Array(event.data);
+                        let audioBufferSource = audioContext.createBufferSource();
+                        let buffer = audioContext.createBuffer(1, audioBuffer.length, 48000);
+                        buffer.copyToChannel(audioBuffer, 0);
+                        audioBufferSource.buffer = buffer;
+                        audioBufferSource.connect(audioContext.destination);
+                        audioBufferSource.start();
+                    }
+                };
+                outputWebSocket.onerror = (error) => log('WebSocket Error: ' + error);
+                outputWebSocket.onclose = () => log('Disconnected from server on port 8081');
+            } catch (error) {
+                log('Error: ' + error);
+            }
+        });
+
+        document.getElementById('speakButton').addEventListener('click', async () => {
+            try {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                let mediaStreamSource = audioContext.createMediaStreamSource(mediaStream);
+                let processor = audioContext.createScriptProcessor(1024, 1, 1);
+                processor.onaudioprocess = (event) => {
+                    let inputData = event.inputBuffer.getChannelData(0);
+                    if (inputWebSocket && inputWebSocket.readyState === WebSocket.OPEN) {
+                        inputWebSocket.send(inputData.buffer);
+                    }
+                };
+                mediaStreamSource.connect(processor);
+                processor.connect(audioContext.destination);
+
+                inputWebSocket = new WebSocket('ws://localhost:8080');
+                inputWebSocket.binaryType = 'arraybuffer';
+                inputWebSocket.onopen = () => log('Connected to server on port 8080');
+                inputWebSocket.onerror = (error) => log('WebSocket Error: ' + error);
+                inputWebSocket.onclose = () => log('Disconnected from server on port 8080');
+            } catch (error) {
+                log('Error: ' + error);
+            }
+        });
+
+        document.getElementById('disconnectButton').addEventListener('click', () => {
+            if (inputWebSocket) {
+                inputWebSocket.close();
+                inputWebSocket = null;
+            }
+            if (outputWebSocket) {
+                outputWebSocket.close();
+                outputWebSocket = null;
+            }
+            if (audioContext) {
+                audioContext.close();
+                audioContext = null;
+            }
+            if (mediaStream) {
+                let tracks = mediaStream.getTracks();
+                tracks.forEach(track => track.stop());
+                mediaStream = null;
+            }
+            document.getElementById('speakButton').disabled = true;
+            document.getElementById('disconnectButton').disabled = true;
+            log('Disconnected from all servers');
+        });
+    </script>
+</body>
+</html>

@@ -2,14 +2,14 @@ import asyncio
 import websockets
 import sounddevice as sd
 import numpy as np
-import time
-
+from scipy.signal import resample
 
 # Audio settings
 CHANNELS = 1
 RATE = 48000
-CHUNK = 2048  # Buffer size
-DTYPE = 'int16'  # Use int16f instead of float32
+TARGET_RATE = 9600
+CHUNK = 1024  # Buffer size
+DTYPE = 'int16'  # Use int16 instead of float32
 
 # Global variable to store the current active websocket
 current_websocket = None
@@ -44,6 +44,11 @@ def check_device_availability(index):
         print(f"Device {index} not available: {e}")
         return False
 
+def resample_audio(audio_data, original_rate, target_rate):
+    number_of_samples = round(len(audio_data) * float(target_rate) / original_rate)
+    resampled_audio = resample(audio_data, number_of_samples)
+    return resampled_audio.astype(np.int16)
+
 async def handle_audio(websocket):
     try:
         with sd.Stream(samplerate=RATE, channels=CHANNELS, dtype=DTYPE, blocksize=CHUNK,
@@ -51,8 +56,12 @@ async def handle_audio(websocket):
             while True:
                 # Read audio input
                 input_data, _ = stream.read(CHUNK)
+                
+                # Resample the audio data from 48000 Hz to 9600 Hz for sending
+                input_data_resampled = resample_audio(input_data, RATE, TARGET_RATE)
+
                 if websocket.open:
-                    await websocket.send(input_data.tobytes())
+                    await websocket.send(input_data_resampled.tobytes())
                     # print("Sent audio data")
 
                 # Receive audio output
@@ -60,7 +69,10 @@ async def handle_audio(websocket):
                 if data:
                     audio_data = np.frombuffer(data, dtype=DTYPE)
                     print(f"Received audio data of length: {len(audio_data)}")
-                    stream.write(audio_data)
+                    
+                    # Resample the received audio data from 9600 Hz to 48000 Hz for playback
+                    output_data_resampled = resample_audio(audio_data, TARGET_RATE, RATE)
+                    stream.write(output_data_resampled)
 
     except websockets.ConnectionClosed:
         print("WebSocket connection closed")
