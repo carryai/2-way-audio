@@ -11,7 +11,7 @@ SAMPLE_RATE = 48000
 CHANNELS = 1
 INPUT_PORT = 8081
 OUTPUT_PORT = 8080
-CHUNK = 512  # Buffer size
+CHUNK = 8192  # Buffer size
 DTYPE = 'int16'  # Use int16f instead of float32
 
 
@@ -50,6 +50,7 @@ async def send_audio(websocket, path):
             if audio_data:
                 # logging.debug(f"Sending audio data: {len(audio_data)} bytes")
                 await websocket.send(audio_data)
+                
 
     loop = asyncio.get_event_loop()
     sender_task = asyncio.ensure_future(audio_sender())
@@ -66,10 +67,10 @@ async def send_audio(websocket, path):
                 input_data, _ = stream.read(CHUNK)
 
                 # Resample the audio data from 48000 Hz to 9600 Hz for sending
-                input_data_resampled = resample_audio(input_data, 48000, 9600)
+                #input_data_resampled = resample_audio(input_data, 48000, 9600)
 
                 if websocket.open:
-                    await websocket.send(input_data_resampled.tobytes())
+                    await websocket.send(input_data.tobytes())
                                     
             await websocket.wait_closed()
     except Exception as e:

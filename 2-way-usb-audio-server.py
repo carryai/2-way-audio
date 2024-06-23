@@ -8,7 +8,7 @@ import time
 # Audio settings
 CHANNELS = 1
 RATE = 48000
-CHUNK = 2048  # Buffer size
+CHUNK = 4000  # Buffer size
 DTYPE = 'int16'  # Use int16f instead of float32
 
 # Global variable to store the current active websocket
@@ -46,11 +46,11 @@ def check_device_availability(index):
 
 async def handle_audio(websocket):
     try:
-        with sd.Stream(samplerate=RATE, channels=CHANNELS, dtype=DTYPE, blocksize=CHUNK,
-                       device=(mic_index, speaker_index)) as stream:
+        with sd.Stream(samplerate=RATE, channels=CHANNELS, dtype=DTYPE, blocksize=0,
+                       device=(mic_index, speaker_index), latency="low") as stream:
             while True:
                 # Read audio input
-                input_data, _ = stream.read(CHUNK)
+                input_data, _ = stream.read(4000)
                 if websocket.open:
                     await websocket.send(input_data.tobytes())
                     # print("Sent audio data")
@@ -59,7 +59,7 @@ async def handle_audio(websocket):
                 data = await websocket.recv()
                 if data:
                     audio_data = np.frombuffer(data, dtype=DTYPE)
-                    print(f"Received audio data of length: {len(audio_data)}")
+                    #print(f"Received audio data of length: {len(audio_data)}")
                     stream.write(audio_data)
 
     except websockets.ConnectionClosed:

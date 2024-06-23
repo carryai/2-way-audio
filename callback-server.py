@@ -2,20 +2,18 @@ import asyncio
 import websockets
 import sounddevice as sd
 import numpy as np
-from scipy.signal import resample
-import struct
-import time
+import queue
 
 # Audio settings
 CHANNELS = 1
 RATE = 48000
-TARGET_RATE = 9600
-CHUNK = 1024  # Buffer size
+CHUNK = 8192  # Buffer size
 DTYPE = 'int16'  # Use int16 instead of float32
 
-# Global variable to store the current active websocket
+# Global variables
 current_websocket = None
 current_websocket_lock = asyncio.Lock()
+audio_queue = queue.Queue()
 
 # Find USB audio device
 def find_usb_audio_device():
@@ -33,10 +31,6 @@ def find_usb_audio_device():
 
 mic_index, speaker_index = find_usb_audio_device()
 
-# Manually set device indices if automatic detection fails
-# mic_index = 1  # Set this to the correct index for your microphone
-# speaker_index = 2  # Set this to the correct index for your speakers
-
 def check_device_availability(index):
     try:
         sd.check_input_settings(device=index, channels=CHANNELS, dtype=DTYPE, samplerate=RATE)
@@ -46,48 +40,28 @@ def check_device_availability(index):
         print(f"Device {index} not available: {e}")
         return False
 
-def resample_audio(audio_data, original_rate, target_rate):
-    number_of_samples = round(len(audio_data) * float(target_rate) / original_rate)
-    resampled_audio = resample(audio_data, number_of_samples)
-    return resampled_audio.astype(np.int16)
+def audio_callback(indata, frames, time, status):
+    if status:
+        print(f"Audio callback status: {status}")
+    audio_queue.put(indata.copy())
+    #print(f"Audio data added to queue: {indata.shape}")
 
-async def handle_audio(websocket):
+async def handle_audio_output(websocket, output_stream):
     try:
-        with sd.Stream(samplerate=RATE, channels=CHANNELS, dtype=DTYPE, blocksize=CHUNK,
-                       device=(mic_index, speaker_index)) as stream:
-            while True:
-                # Read audio input
-                input_data, _ = stream.read(8192)
-                
-                # Resample the audio data from 48000 Hz to 9600 Hz for sending
-                input_data_resampled = resample_audio(input_data, RATE, TARGET_RATE)
-
-                # Get the current time (timestamp)
-                timestamp = time.time()
-                
-                # Pack the timestamp and PCM data into a binary format
-                #data = struct.pack('d', timestamp) + input_data_resampled.tobytes()
-                
-                if websocket.open:
-                    #await websocket.send(data)
-                    await websocket.send(input_data_resampled.tobytes())
-                    
-                    # print("Sent audio data")
-
-                # Receive audio output
-                data = await websocket.recv()
-                if data:
-                    audio_data = np.frombuffer(data, dtype=DTYPE)
-                    print(f"Received audio data of length: {len(audio_data)}")
-                    
-                    # Resample the received audio data from 9600 Hz to 48000 Hz for playback
-                    output_data_resampled = resample_audio(audio_data, TARGET_RATE, RATE)
-                    stream.write(output_data_resampled)
-
+        while websocket.open:
+            data = await websocket.recv()
+            if data:
+                audio_data = np.frombuffer(data, dtype=DTYPE)
+                print(f"Received audio data of length: {len(audio_data)}")
+                output_stream.write(audio_data)
     except websockets.ConnectionClosed:
+
+        while not audio_queue.empty():
+            audio_queue.get()
+                    
         print("WebSocket connection closed")
     except Exception as e:
-        print(f"Error in handle_audio: {e}")
+        print(f"Error in handle_audio_output: {e}")
 
 async def audio_handler(websocket, path):
     global current_websocket
@@ -98,6 +72,10 @@ async def audio_handler(websocket, path):
                 await current_websocket.send("disconnect")
                 await current_websocket.close()
                 print("Disconnected previous client")
+
+                while not audio_queue.empty():
+                    audio_queue.get()
+
             except Exception as e:
                 print(f"Error disconnecting previous client: {e}")
 
@@ -106,7 +84,31 @@ async def audio_handler(websocket, path):
 
         current_websocket = websocket
 
-    await handle_audio(websocket)
+    # Open the output stream for the duration of the WebSocket connection
+    with sd.OutputStream(samplerate=RATE, channels=CHANNELS, dtype=DTYPE, blocksize=CHUNK, device=speaker_index) as output_stream:
+        await handle_audio_output(websocket, output_stream)
+
+async def stream_audio():
+    with sd.InputStream(samplerate=RATE, channels=CHANNELS, dtype=DTYPE, blocksize=CHUNK, device=mic_index, callback=audio_callback, dither_off=True, latency='low', clip_off=True, prime_output_buffers_using_stream_callback=False):
+        while True:
+
+            #print( audio_queue.empty())
+
+            if not audio_queue.empty():
+                data = audio_queue.get()
+                #print(f"Sending audio data of length: {len(data)}")
+                async with current_websocket_lock:
+                    if current_websocket and current_websocket.open:
+                        # Use asyncio.create_task to send data without blocking
+                        asyncio.create_task(current_websocket.send(data.tobytes()))
+
+            # Clear the queue periodically to avoid excessive delay
+            if audio_queue.qsize() > 1:  # Adjust the threshold as necessary
+                print("Clearing audio queue to avoid delay")
+                while not audio_queue.empty():
+                    audio_queue.get()
+
+            await asyncio.sleep(0.001)  # Adjust sleep time as necessary
 
 async def main():
     if mic_index is None or speaker_index is None:
@@ -116,6 +118,11 @@ async def main():
     else:
         print(f"Using microphone device index: {mic_index}")
         print(f"Using speaker device index: {speaker_index}")
+
+        # Start the audio streaming task
+        asyncio.create_task(stream_audio())
+
+        # Start the WebSocket server
         async with websockets.serve(audio_handler, '0.0.0.0', 8080):
             print("Server started at http://0.0.0.0:8080/")
             await asyncio.Future()  # Run forever

@@ -14,46 +14,47 @@
         document.addEventListener("DOMContentLoaded", function () {
             const audioElement = document.getElementById('audio');
             const startButton = document.getElementById('startButton');
+            let audioContext;
+            let source;
+            let mediaSource;
+            let sourceBuffer;
+
+            function fetchAudioStream() {
+                fetch('/audio')
+                    .then(response => {
+                        const reader = response.body.getReader();
+                        reader.read().then(function processStream({ done, value }) {
+                            if (done) {
+                                return;
+                            }
+                            if (sourceBuffer.updating || mediaSource.readyState !== 'open') {
+                                setTimeout(() => processStream({ done, value }), 100);
+                            } else {
+                                sourceBuffer.appendBuffer(value);
+                                reader.read().then(processStream);
+                            }
+                        });
+                    });
+            }
 
             startButton.addEventListener('click', () => {
-                const ws = new WebSocket('ws://localhost:8765');
-                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                const source = audioContext.createBufferSource();
-                const scriptNode = audioContext.createScriptProcessor(4096, 1, 1);
+                if (!audioContext) {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    source = audioContext.createMediaElementSource(audioElement);
+                    source.connect(audioContext.destination);
+                }
 
-                scriptNode.onaudioprocess = function (e) {
-                    const inputBuffer = e.inputBuffer;
-                    const outputBuffer = e.outputBuffer;
-                    for (let channel = 0; channel < outputBuffer.numberOfChannels; channel++) {
-                        const inputData = inputBuffer.getChannelData(channel);
-                        const outputData = outputBuffer.getChannelData(channel);
-                        for (let sample = 0; sample < inputBuffer.length; sample++) {
-                            outputData[sample] = inputData[sample];
-                        }
-                    }
-                };
+                if (audioContext.state === 'suspended') {
+                    audioContext.resume();
+                }
 
-                ws.binaryType = 'arraybuffer';
-                ws.onmessage = function (event) {
-                    audioContext.decodeAudioData(event.data, function (buffer) {
-                        source.buffer = buffer;
-                        source.connect(scriptNode);
-                        scriptNode.connect(audioContext.destination);
-                        source.start(0);
-                    });
-                };
+                mediaSource = new MediaSource();
+                audioElement.src = URL.createObjectURL(mediaSource);
 
-                ws.onopen = function () {
-                    console.log('WebSocket connection opened');
-                };
-
-                ws.onerror = function (error) {
-                    console.error('WebSocket error: ' + error);
-                };
-
-                ws.onclose = function () {
-                    console.log('WebSocket connection closed');
-                };
+                mediaSource.addEventListener('sourceopen', () => {
+                    sourceBuffer = mediaSource.addSourceBuffer('audio/x-wav; codecs="pcm"');
+                    fetchAudioStream();
+                });
 
                 startButton.disabled = true; // Disable the button after starting
             });
