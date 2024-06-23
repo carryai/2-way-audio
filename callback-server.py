@@ -15,14 +15,17 @@ current_websocket = None
 current_websocket_lock = asyncio.Lock()
 audio_queue = queue.Queue()
 
+
+
 # Find USB audio device
 def find_usb_audio_device():
     mic_index = None
     speaker_index = None
     devices = sd.query_devices()
     for i, device in enumerate(devices):
-        print(f"Device {i}: {device['name']}, Input Channels: {device['max_input_channels']}, Output Channels: {device['max_output_channels']}")
         if 'USB' in device['name']:
+            print(f"Device {i}: {device['name']}, Input Channels: {device['max_input_channels']}, Output Channels: {device['max_output_channels']}")
+                        
             if mic_index is None and device['max_input_channels'] > 0:
                 mic_index = i
             if speaker_index is None and device['max_output_channels'] > 0:
@@ -52,8 +55,17 @@ async def handle_audio_output(websocket, output_stream):
             data = await websocket.recv()
             if data:
                 audio_data = np.frombuffer(data, dtype=DTYPE)
-                print(f"Received audio data of length: {len(audio_data)}")
-                output_stream.write(audio_data)
+                print(f"Received audio data of length: {len(audio_data)} :: {audio_data.any()}")
+                # Ensure audio_data is proper in length and not empty
+                if audio_data.any():
+                    output_stream.write(audio_data)
+                    #print (audio_data)
+                    #output_stream.write( audio_signal )
+                    # Write the audio signal in chunks
+                  
+                else:
+                    print("Invalid audio data received, skipping...")
+
     except websockets.ConnectionClosed:
 
         while not audio_queue.empty():

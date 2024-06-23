@@ -24,11 +24,8 @@ amixer -c "$usb_card" set Master 100% unmute
 amixer -c "$usb_card" set 'PCM' 100% unmute
 amixer -c "$usb_card" set 'PCM' 100% unmute
 
-# Get the USB capture device card number
-usb_capture_card=$(get_usb_card_number "capture")
-
 # Check if USB capture device was found
-if [ -z "$usb_capture_card" ]; then
+if [ -z "$usb_card" ]; then
   echo "No USB capture device found"
 else
   # Set the capture volume to 100% and unmute for the USB capture card
