@@ -8,7 +8,7 @@ import time
 # Audio settings
 CHANNELS = 1
 RATE = 48000
-CHUNK = 4000  # Buffer size
+CHUNK = 1024  # Buffer size
 DTYPE = 'int16'  # Use int16f instead of float32
 
 # Global variable to store the current active websocket
@@ -50,7 +50,7 @@ async def handle_audio(websocket):
                        device=(mic_index, speaker_index), latency="low") as stream:
             while True:
                 # Read audio input
-                input_data, _ = stream.read(4000)
+                input_data, _ = stream.read(CHUNK)
                 if websocket.open:
                     await websocket.send(input_data.tobytes())
                     # print("Sent audio data")

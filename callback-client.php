@@ -1,0 +1,264 @@
+<?php
+
+$ws_string = "ws://localhost:8080/";
+
+if (isset($_REQUEST['ws_string'])) {
+    $ws_string = trim($_REQUEST['ws_string']);
+}
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket Audio Streaming</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-EVSTQN3/azprG1Anm3QDgpJLIm9Nao0Yz1ztcQTwFspd3yD65VohhpuuCOmLASjC" crossorigin="anonymous">
+    <style>
+        #statusBox {
+            height: 200px;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            padding: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-5">
+        <h1 class="mb-4">WebSocket Audio Streaming <?=$ws_string?></h1>
+        <div class="row mb-3">
+            <div class="col">
+                <button id="connectButton" class="btn btn-primary">Connect</button>
+                <button id="disconnectButton" class="btn btn-secondary" disabled>Disconnect</button>
+            </div>
+        </div>
+        <div class="row mb-3">
+            <div class="col">
+                <label for="gainSlider" class="form-label">Gain Control</label>
+                <input type="range" class="form-range" id="gainSlider" min="0" max="2" step="0.01" value="1">
+            </div>
+        </div>
+        <div class="row mb-3">
+            <div class="col">
+                <p id="status">Status: Disconnected</p>
+            </div>
+        </div>
+        <div class="row mb-3">
+            <div class="col">
+                <div id="statusBox" class="bg-light"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal -->
+    <div class="modal fade" id="disconnectModal" tabindex="-1" aria-labelledby="disconnectModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="disconnectModalLabel">Disconnected</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    You have been disconnected from the server.
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-primary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS and dependencies -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/js/bootstrap.bundle.min.js" integrity="sha384-MrcW6ZMFYlzcLA8Nl+NtUVF0sA7MsXsP1UyJoMp4YLEuNSfAP+JcXn/tWtIaxVXM" crossorigin="anonymous"></script>
+
+    <script>
+        let websocket;
+        let audioContext;
+        let mediaStream;
+        let mediaStreamSource;
+        let gainNode;
+        let processor;
+        let audioBufferQueue = [];
+        let isPlaying = false;
+        let nextPlaybackTime = 0;
+
+        const connectButton = document.getElementById('connectButton');
+        const disconnectButton = document.getElementById('disconnectButton');
+        const statusElement = document.getElementById('status');
+        const statusBox = document.getElementById('statusBox');
+        const gainSlider = document.getElementById('gainSlider');
+        const disconnectModal = new bootstrap.Modal(document.getElementById('disconnectModal'));
+
+        connectButton.addEventListener('click', connectWebSocket);
+        disconnectButton.addEventListener('click', disconnectWebSocket);
+        gainSlider.addEventListener('input', adjustGain);
+
+        function logStatus(message) {
+            const timestamp = new Date().toLocaleTimeString();
+            statusBox.innerHTML += `<p>[${timestamp}] ${message}</p>`;
+            statusBox.scrollTop = statusBox.scrollHeight;
+        }
+
+        async function connectWebSocket() {
+            websocket = new WebSocket('<?=$ws_string?>');
+            websocket.binaryType = 'arraybuffer';
+
+            websocket.onopen = function() {
+                statusElement.textContent = 'Status: Connected';
+                logStatus('WebSocket connected.');
+                connectButton.disabled = true;
+                disconnectButton.disabled = false;
+                startAudio();
+            };
+
+            websocket.onmessage = function(event) {
+                if (event.data === "disconnect") {
+                    disconnectModal.show();
+                    disconnectWebSocket();
+                    return;
+                }
+                const audioData = new Int16Array(event.data);
+                audioBufferQueue.push(audioData);
+                //logStatus(`Received audio data of length: ${audioData.length}`);
+                if (!isPlaying) {
+                    playAudio();
+                }
+            };
+
+            websocket.onclose = function() {
+                statusElement.textContent = 'Status: Disconnected';
+                logStatus('WebSocket disconnected.');
+                connectButton.disabled = false;
+                disconnectButton.disabled = true;
+                stopAudio();
+                disconnectModal.show();
+            };
+
+            websocket.onerror = function(error) {
+                console.error('WebSocket error:', error);
+                logStatus('WebSocket error occurred.');
+            };
+        }
+
+        function disconnectWebSocket() {
+            if (websocket) {
+                websocket.close();
+            }
+        }
+
+        async function startAudio() {
+            try {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                    sampleRate: 48000
+                });
+                mediaStream = await navigator.mediaDevices.getUserMedia({ audio: {
+                        channelCount: 1,
+                        echoCancellation: false,
+                        noiseSuppression: false,
+                        autoGainControl: false
+                    } });
+                logStatus('Microphone acquired.');
+                mediaStreamSource = audioContext.createMediaStreamSource(mediaStream);
+
+                gainNode = audioContext.createGain();
+                gainNode.gain.value = gainSlider.value;
+                processor = audioContext.createScriptProcessor(1024, 1, 1); // Adjust buffer size for 9600 Hz
+                processor.onaudioprocess = function(event) {
+                    const inputData = event.inputBuffer.getChannelData(0);
+                    const int16Data = new Int16Array(inputData.length);
+                    let sum = 0;
+                    for (let i = 0; i < inputData.length; i++) {
+                        int16Data[i] = inputData[i] * 32767; // Convert float to int16
+                        sum += inputData[i] * inputData[i]; // Calculate squared sum
+                    }
+                    const rms = Math.sqrt(sum / inputData.length); // Calculate RMS (Root Mean Square)
+                    const threshold = 0.01; // Adjust this threshold as needed
+                    if (rms > threshold) {
+                        if (websocket && websocket.readyState === WebSocket.OPEN) {
+                            websocket.send(int16Data.buffer);
+                            logStatus('Sent audio data from MacBook mic');
+                        }
+                    }
+                };
+
+                mediaStreamSource.connect(gainNode);
+                gainNode.connect(processor);
+                processor.connect(audioContext.destination);
+            } catch (error) {
+                logStatus('Failed to acquire microphone.');
+                console.error('Error acquiring microphone:', error);
+            }
+        }
+
+        function stopAudio() {
+            if (processor) {
+                processor.disconnect();
+                processor.onaudioprocess = null;
+                processor = null;
+            }
+            if (gainNode) {
+                gainNode.disconnect();
+                gainNode = null;
+            }
+            if (mediaStreamSource) {
+                mediaStreamSource.disconnect();
+                mediaStreamSource = null;
+            }
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+                mediaStream = null;
+            }
+            if (audioContext) {
+                audioContext.close();
+                audioContext = null;
+            }
+        }
+
+        function adjustGain() {
+            if (gainNode) {
+                gainNode.gain.value = gainSlider.value;
+                logStatus(`Gain adjusted to ${gainSlider.value}`);
+            }
+        }
+
+        function playAudio() {
+            if (audioBufferQueue.length === 0) {
+                isPlaying = false;
+                return;
+            }
+
+            isPlaying = true;
+
+            console.log(audioBufferQueue.length);
+
+            // Skip old buffers if there are too many
+            if (audioBufferQueue.length > 3) {
+                logStatus('Skipping old buffers to reduce latency.');
+                audioBufferQueue = audioBufferQueue.slice(-3); // Keep only the last 10 buffers
+            }
+
+            const audioData = audioBufferQueue.shift();
+            const audioBuffer = audioContext.createBuffer(1, audioData.length, 48000);
+            const float32Data = audioBuffer.getChannelData(0);
+            for (let i = 0; i < audioData.length; i++) {
+                float32Data[i] = audioData[i] / 32767; // Convert int16 to float
+            }
+
+            const source = audioContext.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(audioContext.destination);
+
+            // Play the buffer immediately
+            source.start(audioContext.currentTime);
+
+            source.onended = () => {
+                if (audioBufferQueue.length > 0) {
+                    playAudio(); // Continue playing the next buffer
+                } else {
+                    isPlaying = false;
+                }
+            };
+        }
+    </script>
+</body>
+</html>

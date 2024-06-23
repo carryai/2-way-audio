@@ -7,7 +7,7 @@ import queue
 # Audio settings
 CHANNELS = 1
 RATE = 48000
-CHUNK = 8192  # Buffer size
+CHUNK = 4096  # Buffer size
 DTYPE = 'int16'  # Use int16 instead of float32
 
 # Global variables
