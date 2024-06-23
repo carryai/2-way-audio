@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>Live Audio Stream</title>
+</head>
+<body>
+    <h1>Live Audio Stream</h1>
+    <button id="startButton">Start Audio</button>
+    <audio id="audio" controls></audio>
+    <script>
+        document.addEventListener("DOMContentLoaded", function () {
+            const audioElement = document.getElementById('audio');
+            const startButton = document.getElementById('startButton');
+
+            startButton.addEventListener('click', () => {
+                const ws = new WebSocket('ws://localhost:8765');
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const source = audioContext.createBufferSource();
+                const scriptNode = audioContext.createScriptProcessor(4096, 1, 1);
+
+                scriptNode.onaudioprocess = function (e) {
+                    const inputBuffer = e.inputBuffer;
+                    const outputBuffer = e.outputBuffer;
+                    for (let channel = 0; channel < outputBuffer.numberOfChannels; channel++) {
+                        const inputData = inputBuffer.getChannelData(channel);
+                        const outputData = outputBuffer.getChannelData(channel);
+                        for (let sample = 0; sample < inputBuffer.length; sample++) {
+                            outputData[sample] = inputData[sample];
+                        }
+                    }
+                };
+
+                ws.binaryType = 'arraybuffer';
+                ws.onmessage = function (event) {
+                    audioContext.decodeAudioData(event.data, function (buffer) {
+                        source.buffer = buffer;
+                        source.connect(scriptNode);
+                        scriptNode.connect(audioContext.destination);
+                        source.start(0);
+                    });
+                };
+
+                ws.onopen = function () {
+                    console.log('WebSocket connection opened');
+                };
+
+                ws.onerror = function (error) {
+                    console.error('WebSocket error: ' + error);
+                };
+
+                ws.onclose = function () {
+                    console.log('WebSocket connection closed');
+                };
+
+                startButton.disabled = true; // Disable the button after starting
+            });
+        });
+    </script>
+</body>
+</html>
